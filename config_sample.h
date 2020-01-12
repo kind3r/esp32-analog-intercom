@@ -11,3 +11,5 @@ const String ha_url = "http://YOUR_HA_SERVER_IP:8123";
 const String ha_token = "LONG_LIVED_ACCESS_TOKEN";
 const String ha_device_id = "sensor_id";
 const String ha_device_name = "sensor name";
+
+const String device_token = "************";

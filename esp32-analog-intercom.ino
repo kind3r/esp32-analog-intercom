@@ -11,6 +11,10 @@ uint8_t u8log_buffer[U8LOG_WIDTH*U8LOG_HEIGHT];
 
 #include <ArduinoJson.h>
 
+#include <WebServer.h>
+#include <ESPmDNS.h>
+WebServer server(80);
+
 volatile bool timerInterrupted = false;
 hw_timer_t * timer = NULL;
 
@@ -90,6 +94,7 @@ String createSensorPayload(const String &state) {
 
   JsonObject attributes = doc.createNestedObject("attributes");
   attributes["friendly_name"] = ha_device_name;
+  attributes["boot_count"] = bootCount;
   doc["entity_id"] = "sensor." + ha_device_id;
   doc["state"] = state;
 
@@ -139,7 +144,9 @@ void updateHASensor(const String &state) {
 
 void lowPowerMode() {
   updateHASensor("idle");
-  
+
+  server.stop();
+
   //Setup interrupt on Touch Pad 3 (GPIO15) to simulate ringing
   touchAttachInterrupt(T3, callback, Threshold);
   esp_sleep_enable_touchpad_wakeup();
@@ -176,6 +183,30 @@ void setTimer(const uint64_t seconds) {
   timerAlarmEnable(timer);
 }
 
+void httpHandleRoot() {
+  display.println(server.header("user-agent"));
+  server.send(200, "text/plain", "hello from " + ha_device_id);
+}
+
+void httpHandleOpen() {
+  String authorization = server.header("authorization");
+  if(authorization != device_token) {
+    server.send(403, "text/plain", "Invalid authorization header");
+  } else {
+    server.send(200, "text/plain", "Opening door");
+    openDoor();
+  }
+}
+
+void httpHandleNotFound() {
+  server.send(404, "text/plain", "Not Found");
+}
+
+void openDoor() {
+  display.println("Opening door");
+  updateHASensor("opening");
+}
+
 void callback(){
   //placeholder callback function
 }
@@ -193,6 +224,7 @@ void setup() {
   print_wakeup_reason();
 
   startWifi();
+  MDNS.begin(ha_device_id.c_str());
 
   if(bootCount == 0) {
     setClock();
@@ -202,13 +234,22 @@ void setup() {
 
   bootCount++;
 
+  server.on("/", httpHandleRoot);
+  server.on("/open", httpHandleOpen);
+  server.onNotFound(httpHandleNotFound);
+  const char * headerkeys[] = {"User-Agent", "Authorization"} ;
+  size_t headerkeyssize = sizeof(headerkeys) / sizeof(char*);
+  server.collectHeaders(headerkeys, headerkeyssize);
+  server.begin();
+  MDNS.addService("http", "tcp", 80);
+
   // set a timer to simulate ringing stopped
   setTimer(10);
   display.println("Going to sleep in 10s");
 }
 
 void loop() {
-  delay(100);
+  server.handleClient();
   if(timerInterrupted == true) {
     lowPowerMode();
   }
