@@ -11,6 +11,9 @@ uint8_t u8log_buffer[U8LOG_WIDTH*U8LOG_HEIGHT];
 
 #include <ArduinoJson.h>
 
+volatile bool timerInterrupted = false;
+hw_timer_t * timer = NULL;
+
 #define Threshold 40 /* Greater the value, more the sensitivity */
 
 RTC_DATA_ATTR int bootCount = 0;
@@ -134,6 +137,17 @@ void updateHASensor(const String &state) {
 
 }
 
+void lowPowerMode() {
+  updateHASensor("idle");
+  
+  //Setup interrupt on Touch Pad 3 (GPIO15) to simulate ringing
+  touchAttachInterrupt(T3, callback, Threshold);
+  esp_sleep_enable_touchpad_wakeup();
+
+  u8g2.setPowerSave(1);
+  esp_deep_sleep_start();
+}
+
 void print_wakeup_reason(){
   esp_sleep_wakeup_cause_t wakeup_reason;
 
@@ -148,6 +162,18 @@ void print_wakeup_reason(){
     case ESP_SLEEP_WAKEUP_ULP : display.println("Wakeup caused by ULP program"); break;
     default : display.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
   }
+}
+
+void IRAM_ATTR onTimer() {
+  timerInterrupted = true;
+}
+
+void setTimer(const uint64_t seconds) {
+  timerInterrupted = false;
+  timer = timerBegin(0, 80, true);
+  timerAttachInterrupt(timer, &onTimer, true);
+  timerAlarmWrite(timer, seconds * 1000000, false);
+  timerAlarmEnable(timer);
 }
 
 void callback(){
@@ -170,22 +196,20 @@ void setup() {
 
   if(bootCount == 0) {
     setClock();
+  } else {
+    updateHASensor("ringing");
   }
 
-  ++bootCount;
+  bootCount++;
 
-  //Setup interrupt on Touch Pad 3 (GPIO15)
-  touchAttachInterrupt(T3, callback, Threshold);
-
-  //Configure Touchpad as wakeup source
-  esp_sleep_enable_touchpad_wakeup();
+  // set a timer to simulate ringing stopped
+  setTimer(10);
+  display.println("Going to sleep in 10s");
 }
 
 void loop() {
-  updateHASensor("ringing");
-  display.println("Going to sleep in 10s");
-  delay(10000);
-  updateHASensor("idle");
-  u8g2.setPowerSave(1);
-  esp_deep_sleep_start();
+  delay(100);
+  if(timerInterrupted == true) {
+    lowPowerMode();
+  }
 }
