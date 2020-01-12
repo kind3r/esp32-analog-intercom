@@ -6,6 +6,10 @@ U8G2LOG display;
 uint8_t u8log_buffer[U8LOG_WIDTH*U8LOG_HEIGHT];
 
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
+#include <ArduinoJson.h>
 
 #define Threshold 40 /* Greater the value, more the sensitivity */
 
@@ -13,6 +17,7 @@ RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR uint8_t ip[4];
 RTC_DATA_ATTR uint8_t gateway[4];
 RTC_DATA_ATTR uint8_t subnet[4];
+RTC_DATA_ATTR uint8_t dns[4];
 
 /**
  * At first boot, we use DHCP and store the ip/gw/subnet values in RTC
@@ -23,7 +28,7 @@ void startWifi() {
   display.setRedrawMode(1);
   WiFi.begin(ssid, password);
   if(bootCount != 0) { // restore settings from RTC
-    WiFi.config(IPAddress(ip), IPAddress(gateway), IPAddress(subnet));
+    WiFi.config(IPAddress(ip), IPAddress(gateway), IPAddress(subnet), IPAddress(dns));
   }
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -36,6 +41,7 @@ void startWifi() {
     display.print("IP: "); display.println(WiFi.localIP());
     display.print("GW: "); display.println(WiFi.gatewayIP());
     display.print("NET:"); display.println(WiFi.subnetMask());
+    display.print("DNS:"); display.println(WiFi.dnsIP());
     ip[0] = WiFi.localIP()[0];
     ip[1] = WiFi.localIP()[1];
     ip[2] = WiFi.localIP()[2];
@@ -48,7 +54,84 @@ void startWifi() {
     subnet[1] = WiFi.subnetMask()[1];
     subnet[2] = WiFi.subnetMask()[2];
     subnet[3] = WiFi.subnetMask()[3];
+    dns[0] = WiFi.dnsIP()[0];
+    dns[1] = WiFi.dnsIP()[1];
+    dns[2] = WiFi.dnsIP()[2];
+    dns[3] = WiFi.dnsIP()[3];
   }
+}
+
+void setClock() {
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+  display.print("Waiting for NTP time sync: ");
+  time_t nowSecs = time(nullptr);
+  display.setRedrawMode(1);
+  while (nowSecs < 8 * 3600 * 2) {
+    delay(500);
+    display.print(".");
+    yield();
+    nowSecs = time(nullptr);
+  }
+  display.setRedrawMode(0);
+  display.println();
+  struct tm timeinfo;
+  gmtime_r(&nowSecs, &timeinfo);
+  display.print("Current time: ");
+  display.println(asctime(&timeinfo));
+}
+
+String createSensorPayload(const String &state) {
+  const size_t capacity = JSON_OBJECT_SIZE(10);
+  DynamicJsonDocument doc(capacity);
+
+  JsonObject attributes = doc.createNestedObject("attributes");
+  attributes["friendly_name"] = ha_device_name;
+  doc["entity_id"] = "sensor." + ha_device_id;
+  doc["state"] = state;
+
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+void updateHASensor(const String &state) {
+  WiFiClientSecure *client = new WiFiClientSecure;
+  if(client) {
+
+    {
+      // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
+      HTTPClient https;
+  
+      // display.print("[HTTPS] begin...\n");
+      if (https.begin(*client, ha_url + "/api/states/sensor." + ha_device_id)) {
+        https.addHeader("Authorization", "Bearer " + ha_token);
+        String body = createSensorPayload(state);
+        // display.println("[HTTPS] POST... " + body);
+        int httpCode = https.POST(body);
+        if (httpCode > 0) {
+          display.printf("[HTTPS] POST... code: %d\n", httpCode);
+          if(httpCode != 200) {
+            String payload = https.getString();
+            display.println(payload);
+          }
+        } else {
+          display.printf("[HTTPS] POST... failed, error: %s\n", https.errorToString(httpCode).c_str());
+        }
+  
+        https.end();
+      } else {
+        display.printf("[HTTPS] Unable to connect\n");
+      }
+
+      // End extra scoping block
+    }
+  
+    delete client;
+  } else {
+    display.println("[HTTPS] Unable to create client");
+  }
+
 }
 
 void print_wakeup_reason(){
@@ -79,14 +162,15 @@ void setup() {
   display.setLineHeightOffset(0);	// set extra space between lines in pixel, this can be negative
   display.setRedrawMode(0);		// 0: Update screen with newline, 1: Update screen for every char 
 
-  if(bootCount == 0) {
-  }
-
   display.println("Boot number: " + String(bootCount));
 
   print_wakeup_reason();
 
   startWifi();
+
+  if(bootCount == 0) {
+    setClock();
+  }
 
   ++bootCount;
 
@@ -98,8 +182,10 @@ void setup() {
 }
 
 void loop() {
-  display.println("Going to sleep now");
-  delay(1000);
+  updateHASensor("ringing");
+  display.println("Going to sleep in 10s");
+  delay(10000);
+  updateHASensor("idle");
   u8g2.setPowerSave(1);
   esp_deep_sleep_start();
 }
