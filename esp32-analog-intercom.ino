@@ -1,22 +1,22 @@
 #include "config.h"
-#include <Wire.h>
-// #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <U8g2lib.h>
 
-// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, DISPLAY_CLOCK, DISPLAY_DATA);
+U8G2LOG display;
+uint8_t u8log_buffer[U8LOG_WIDTH*U8LOG_HEIGHT];
+
 
 #include <WiFi.h>
-
 IPAddress staticIP(192,168,1,36);
 IPAddress gateway(192,168,1,1);
 IPAddress subnet(255,255,255,0);
 
-#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  5        /* Time ESP32 will go to sleep (in seconds) */
+
 #define Threshold 40 /* Greater the value, more the sensitivity */
 
+
 RTC_DATA_ATTR int bootCount = 0;
+
 
 void print_wakeup_reason(){
   esp_sleep_wakeup_cause_t wakeup_reason;
@@ -32,8 +32,6 @@ void print_wakeup_reason(){
     case ESP_SLEEP_WAKEUP_ULP : display.println("Wakeup caused by ULP program"); break;
     default : display.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
   }
-
-  display.display();
 }
 
 void callback(){
@@ -43,39 +41,33 @@ void callback(){
 
 void setup() {
   Serial.begin(115200);
-  Wire.begin(5, 4);
 
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C, bootCount == 0)) { // Address 0x3D for 128x64
-    Serial.println(F("SSD1306 allocation failed"));
-    for(;;);
-  }
+  u8g2.begin();
+  u8g2.setFont(u8g2_font_tom_thumb_4x6_mf);
+  display.begin(u8g2, U8LOG_WIDTH, U8LOG_HEIGHT, u8log_buffer);
+  display.setLineHeightOffset(0);	// set extra space between lines in pixel, this can be negative
+  display.setRedrawMode(0);		// 0: Update screen with newline, 1: Update screen for every char 
+
   if(bootCount == 0) {
-    display.dim(true);
   }
-  display.clearDisplay();
-
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(0, 10);
 
   ++bootCount;
   display.println("Boot number: " + String(bootCount));
 
   print_wakeup_reason();
 
-  display.printf("Connecting to %s ", ssid);
-  display.display();
+  display.printf("Connecting to %s", ssid);
+  display.setRedrawMode(1);
   WiFi.begin(ssid, password);
   WiFi.config(staticIP, gateway, subnet);
   while (WiFi.status() != WL_CONNECTED)
   {
-    delay(100);
+    delay(50);
     display.print(".");
-    display.display();
   }
+  display.setRedrawMode(0);
   display.println();
   display.println(WiFi.localIP());
-  display.display();
 
   //Setup interrupt on Touch Pad 3 (GPIO15)
   touchAttachInterrupt(T3, callback, Threshold);
@@ -86,7 +78,7 @@ void setup() {
 
 void loop() {
   display.println("Going to sleep now");
-  display.display();
   delay(1000);
+  u8g2.setPowerSave(1);
   esp_deep_sleep_start();
 }
