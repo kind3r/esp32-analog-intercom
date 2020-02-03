@@ -13,3 +13,12 @@ const String ha_device_id = "sensor_id";
 const String ha_device_name = "sensor name";
 
 const String device_token = "************";
+
+// Talk relay
+const int TALK = 12;
+// Open relay
+const int OPEN = 13;
+// Talk switch
+const int TALK_SW = 14;
+// Open switch
+const int OPEN_SW = 15;
